@@ -69,17 +69,31 @@ func (s Set) Dup() (newS Set, retErr error) {
 }
 
 // Do performs the given function in the context of the set of namespaces.
-//
 // This does not affect the state of the current thread or goroutine.
+//
+// The bool on the return function should be used to indicate if the thread
+// should be restored to the old state. In some cases even true is returned the
+// thread may still not be restored and will subsequently be thrown away.
+// When in doubt, return false.  You can also just outright skip restoration by
+// passing `false` to `Do`. In some cases, particularly when more than a couple
+// of namespaces are set, this will perform better.
+//
+// Keep in mind it is *always* safer to not restore the thread, which causes go to
+// throw away the thread and create a new one.
 //
 // The passed in function should not create any new goroutinues or those goroutines will not be in the correct namespace.
 // If you need to create a goroutine and want it to be in the correct namespace, call `set.Do` again from that goroutine.
-func (s Set) Do(f func()) error {
+func (s Set) Do(f func() bool, restore bool) error {
 	chErr := make(chan error, 1)
+	var cur Set
 
-	cur, err := Current(s.flags)
-	if err != nil {
-		return fmt.Errorf("error getting current namespaces: %w", err)
+	if restore {
+		var err error
+		cur, err := Current(s.flags)
+		if err != nil {
+			restore = true
+		}
+		defer cur.Close()
 	}
 
 	go func() {
@@ -90,13 +104,13 @@ func (s Set) Do(f func()) error {
 				return fmt.Errorf("error setting namespaces: %w", err)
 			}
 
-			f()
-
-			// TODO: Once you hit a certain number of namespaces that need to be
-			// restored it ends up being faster to just dump the thread instead
-			// of trying to restore it. This basically becomes trade-offs with
-			// setns calls and cost of thread creation for the go runtime.
-			// For now this just always restores the thread (or at least tries to).
+			restoreF := f()
+			if !restore {
+				return nil
+			}
+			if !restoreF {
+				return nil
+			}
 
 			if err := cur.set(); err != nil {
 				return fmt.Errorf("error restoring namespaces: %w", err)
@@ -107,6 +121,7 @@ func (s Set) Do(f func()) error {
 			// other goroutines again, in which case the thread should
 			// just exit exit as soon as this goroutine is done.
 			runtime.UnlockOSThread()
+
 			return nil
 		}()
 	}()

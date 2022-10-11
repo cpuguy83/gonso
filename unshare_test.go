@@ -64,12 +64,10 @@ func TestUnshare(t *testing.T) {
 
 	var p1, p2 *os.File
 	var pErr error
-	err = s.Do(func() {
-		p1, err = getNs("net")
-		if err != nil {
-			pErr = err
-		}
-	})
+	err = s.Do(func() bool {
+		p1, pErr = getNs("net")
+		return pErr == nil
+	}, true)
 	if pErr != nil {
 		t.Fatal(pErr)
 	}
@@ -79,12 +77,10 @@ func TestUnshare(t *testing.T) {
 
 	defer p1.Close()
 
-	err = newS.Do(func() {
-		p2, err = getNs("net")
-		if err != nil {
-			pErr = err
-		}
-	})
+	err = newS.Do(func() bool {
+		p2, pErr = getNs("net")
+		return pErr == nil
+	}, true)
 	if pErr != nil {
 		t.Fatal(err)
 	}
@@ -99,24 +95,28 @@ func TestUnshare(t *testing.T) {
 }
 
 func BenchmarkDo(b *testing.B) {
-	b.Run("one namespace", func(b *testing.B) {
-		benchmarkNamespace(b, unix.CLONE_NEWNET)
-	})
-	b.Run("two namespaces", func(b *testing.B) {
-		benchmarkNamespace(b, unix.CLONE_NEWNET|unix.CLONE_NEWIPC)
-	})
-	b.Run("three namespaces", func(b *testing.B) {
-		benchmarkNamespace(b, unix.CLONE_NEWNET|unix.CLONE_NEWIPC|unix.CLONE_NEWUTS)
-	})
-	b.Run("four namespaces", func(b *testing.B) {
-		benchmarkNamespace(b, unix.CLONE_NEWNET|unix.CLONE_NEWIPC|unix.CLONE_NEWUTS|unix.CLONE_NEWPID)
-	})
-	b.Run("five namespaces", func(b *testing.B) {
-		benchmarkNamespace(b, unix.CLONE_NEWNET|unix.CLONE_NEWIPC|unix.CLONE_NEWUTS|unix.CLONE_NEWPID|unix.CLONE_NEWCGROUP)
-	})
+	for _, restore := range []bool{true, false} {
+		b.Run(fmt.Sprintf("restore=%v", restore), func(b *testing.B) {
+			b.Run("one namespace", func(b *testing.B) {
+				benchmarkNamespace(b, unix.CLONE_NEWNET, restore)
+			})
+			b.Run("two namespaces", func(b *testing.B) {
+				benchmarkNamespace(b, unix.CLONE_NEWNET|unix.CLONE_NEWIPC, restore)
+			})
+			b.Run("three namespaces", func(b *testing.B) {
+				benchmarkNamespace(b, unix.CLONE_NEWNET|unix.CLONE_NEWIPC|unix.CLONE_NEWUTS, restore)
+			})
+			b.Run("four namespaces", func(b *testing.B) {
+				benchmarkNamespace(b, unix.CLONE_NEWNET|unix.CLONE_NEWIPC|unix.CLONE_NEWUTS|unix.CLONE_NEWPID, restore)
+			})
+			b.Run("five namespaces", func(b *testing.B) {
+				benchmarkNamespace(b, unix.CLONE_NEWNET|unix.CLONE_NEWIPC|unix.CLONE_NEWUTS|unix.CLONE_NEWPID|unix.CLONE_NEWCGROUP, restore)
+			})
+		})
+	}
 }
 
-func benchmarkNamespace(b *testing.B, flags int) {
+func benchmarkNamespace(b *testing.B, flags int, restore bool) {
 	b.StopTimer()
 	curr, err := Current(flags)
 	if err != nil {
@@ -133,9 +133,9 @@ func benchmarkNamespace(b *testing.B, flags int) {
 	b.StartTimer()
 
 	for i := 0; i < b.N; i++ {
-		err := s.Do(func() {
-			// nothing
-		})
+		err := s.Do(func() bool {
+			return restore
+		}, restore)
 		if err != nil {
 			b.Error(err)
 		}

@@ -82,7 +82,7 @@ func TestUnshare(t *testing.T) {
 		return pErr == nil
 	}, true)
 	if pErr != nil {
-		t.Fatal(err)
+		t.Fatal(pErr)
 	}
 	if err != nil {
 		t.Fatal(err)

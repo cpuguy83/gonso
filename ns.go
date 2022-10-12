@@ -68,6 +68,8 @@ func (s Set) Dup() (newS Set, retErr error) {
 	return newS, nil
 }
 
+const nonReversibleFlags = unix.CLONE_NEWUSER | unix.CLONE_NEWIPC | unix.CLONE_FS | unix.CLONE_NEWNS
+
 // Do performs the given function in the context of the set of namespaces.
 // This does not affect the state of the current thread or goroutine.
 //
@@ -86,6 +88,11 @@ func (s Set) Dup() (newS Set, retErr error) {
 func (s Set) Do(f func() bool, restore bool) error {
 	chErr := make(chan error, 1)
 	var cur Set
+
+	// Some flags are not reversible so don't even bother trying to restore the thread.
+	if s.flags&nonReversibleFlags != 0 {
+		restore = false
+	}
 
 	if restore {
 		var err error

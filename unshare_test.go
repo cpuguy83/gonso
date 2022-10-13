@@ -12,85 +12,108 @@ import (
 )
 
 func TestUnshare(t *testing.T) {
-	dir := t.TempDir()
-	if err := unix.Mount("tmpfs", dir, "tmpfs", 0, ""); err != nil {
-		t.Fatal(err)
-	}
-	defer func() {
-		if err := unix.Unmount(dir, unix.MNT_DETACH); err != nil {
-			t.Log(err)
+	t.Run("restore=false", testUnshare(t, false))
+	t.Run("restore=true", testUnshare(t, true))
+}
+
+func testUnshare(t *testing.T, restore bool) func(t *testing.T) {
+	return func(t *testing.T) {
+		dir := t.TempDir()
+		if err := unix.Mount("tmpfs", dir, "tmpfs", 0, ""); err != nil {
+			t.Fatal(err)
 		}
-	}()
+		defer func() {
+			if err := unix.Unmount(dir, unix.MNT_DETACH); err != nil {
+				t.Log(err)
+			}
+		}()
 
-	getNs := func(ns string) (*os.File, error) {
-		t.Helper()
+		getNs := func(ns string) (*os.File, error) {
+			t.Helper()
 
-		p := "/proc/self/task/" + strconv.Itoa(unix.Gettid()) + "/ns/" + ns
-		l, err := os.Readlink(p)
+			p := "/proc/self/task/" + strconv.Itoa(unix.Gettid()) + "/ns/" + ns
+			l, err := os.Readlink(p)
+			if err != nil {
+				return nil, fmt.Errorf("readlink %s: %w", p, err)
+			}
+
+			l = strings.Replace(strings.Replace(strings.Replace(l, ":", "-", -1), "[", "", -1), "]", "", -1)
+
+			if _, err := os.Stat(filepath.Join(dir, l)); !os.IsNotExist(err) {
+				return nil, fmt.Errorf("expected file not found, got: %w", err)
+			}
+
+			f, err := os.Create(filepath.Join(dir, l))
+			if err != nil {
+				return nil, fmt.Errorf("error creating ns file: %w", err)
+			}
+
+			f.Close()
+
+			if err := unix.Mount(p, f.Name(), "none", unix.MS_BIND, ""); err != nil {
+				return nil, fmt.Errorf("error mounting ns file: %w", err)
+			}
+			return os.Open(f.Name())
+		}
+
+		s, err := Current(NS_NET)
 		if err != nil {
-			return nil, fmt.Errorf("readlink %s: %w", p, err)
+			t.Fatal(err)
 		}
+		defer s.Close()
 
-		l = strings.Replace(strings.Replace(strings.Replace(l, ":", "-", -1), "[", "", -1), "]", "", -1)
-
-		if _, err := os.Stat(filepath.Join(dir, l)); !os.IsNotExist(err) {
-			return nil, fmt.Errorf("expected file not found, got: %w", err)
-		}
-
-		f, err := os.Create(filepath.Join(dir, l))
+		newS, err := s.Unshare(unix.CLONE_NEWNET)
 		if err != nil {
-			return nil, fmt.Errorf("error creating ns file: %w", err)
+			t.Fatal(err)
+		}
+		defer newS.Close()
+
+		var p1, p2 *os.File
+		var pErr error
+		err = s.Do(func() bool {
+			p1, pErr = getNs("net")
+			return pErr == nil
+		}, restore)
+		if pErr != nil {
+			t.Fatal(pErr)
+		}
+		if err != nil {
+			t.Fatal(err)
 		}
 
-		f.Close()
+		defer p1.Close()
 
-		if err := unix.Mount(p, f.Name(), "none", unix.MS_BIND, ""); err != nil {
-			return nil, fmt.Errorf("error mounting ns file: %w", err)
+		err = newS.Do(func() bool {
+			p2, pErr = getNs("net")
+			return pErr == nil
+		}, restore)
+		if pErr != nil {
+			t.Fatal(pErr)
 		}
-		return os.Open(f.Name())
-	}
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer p2.Close()
 
-	s, err := Current(NS_NET)
-	if err != nil {
-		t.Fatal(err)
+		if p1.Name() == p2.Name() {
+			t.Fatal("expected new mount namespace")
+		}
 	}
-	defer s.Close()
+}
 
-	newS, err := s.Unshare(unix.CLONE_NEWNET)
-	if err != nil {
-		t.Fatal(err)
+func asParallel(t *testing.T, testFunc func(*testing.T)) func(t *testing.T) {
+	return func(t *testing.T) {
+		t.Parallel()
+		testFunc(t)
 	}
-	defer newS.Close()
+}
 
-	var p1, p2 *os.File
-	var pErr error
-	err = s.Do(func() bool {
-		p1, pErr = getNs("net")
-		return pErr == nil
-	}, true)
-	if pErr != nil {
-		t.Fatal(pErr)
+func TestMulti(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping test in short mode")
 	}
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	defer p1.Close()
-
-	err = newS.Do(func() bool {
-		p2, pErr = getNs("net")
-		return pErr == nil
-	}, true)
-	if pErr != nil {
-		t.Fatal(pErr)
-	}
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer p2.Close()
-
-	if p1.Name() == p2.Name() {
-		t.Fatal("expected new mount namespace")
+	for i := 0; i < 1000; i++ {
+		t.Run(strconv.Itoa(i), asParallel(t, TestUnshare))
 	}
 }
 

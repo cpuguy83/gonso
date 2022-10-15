@@ -3,8 +3,6 @@ package gonso
 import (
 	"fmt"
 	"os"
-	"path/filepath"
-	"strings"
 	"testing"
 
 	"golang.org/x/sys/unix"
@@ -36,50 +34,36 @@ func testUnshare(t *testing.T, restore bool) func(t *testing.T) {
 			}
 		}()
 
-		getNs := func(ns string) (*os.File, error) {
+		getNs := func(ns string) (string, error) {
 			t.Helper()
 
 			p := "/proc/thread-self/ns/" + ns
 			l, err := os.Readlink(p)
 			if err != nil {
-				return nil, fmt.Errorf("readlink %s: %w", p, err)
+				return "", fmt.Errorf("readlink %s: %w", p, err)
 			}
-
-			l = strings.Replace(strings.Replace(strings.Replace(l, ":", "-", -1), "[", "", -1), "]", "", -1)
-
-			if _, err := os.Stat(filepath.Join(dir, l)); !os.IsNotExist(err) {
-				return nil, fmt.Errorf("expected file not found, got: %w", err)
-			}
-
-			f, err := os.Create(filepath.Join(dir, l))
-			if err != nil {
-				return nil, fmt.Errorf("error creating ns file: %w", err)
-			}
-
-			f.Close()
-
-			if err := unix.Mount(p, f.Name(), "none", unix.MS_BIND, ""); err != nil {
-				return nil, fmt.Errorf("error mounting ns file: %w", err)
-			}
-			return os.Open(f.Name())
+			return l, nil
 		}
 
-		s, err := Current(NS_NET)
+		nsName := "net"
+		ns := nsFlags[nsName]
+
+		s, err := Current(ns)
 		if err != nil {
 			t.Fatal(err)
 		}
 		defer s.Close()
 
-		newS, err := s.Unshare(unix.CLONE_NEWNET)
+		newS, err := s.Unshare(ns)
 		if err != nil {
 			t.Fatal(err)
 		}
 		defer newS.Close()
 
-		var p1, p2 *os.File
+		var p1, p2 string
 		var pErr error
 		err = s.Do(func() bool {
-			p1, pErr = getNs("net")
+			p1, pErr = getNs(nsName)
 			return pErr == nil
 		}, restore)
 		if pErr != nil {
@@ -88,11 +72,9 @@ func testUnshare(t *testing.T, restore bool) func(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-
-		defer p1.Close()
 
 		err = newS.Do(func() bool {
-			p2, pErr = getNs("net")
+			p2, pErr = getNs(nsName)
 			return pErr == nil
 		}, restore)
 		if pErr != nil {
@@ -101,10 +83,9 @@ func testUnshare(t *testing.T, restore bool) func(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer p2.Close()
 
-		if p1.Name() == p2.Name() {
-			t.Fatal("expected new mount namespace")
+		if p1 == p2 {
+			t.Fatal("expected new namespace")
 		}
 	}
 }

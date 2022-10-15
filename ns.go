@@ -239,17 +239,14 @@ var (
 // If `flags` is 0, all namespaces are returned.
 func Current(flags int) (Set, error) {
 	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
 
 	if flags == 0 {
 		// NS_USER is intentionally not included here since it is not supported by setns(2) from a multithreaded program.
 		flags = NS_CGROUP | NS_IPC | NS_MNT | NS_NET | NS_PID | NS_TIME | NS_UTS
 	}
 
-	s, err := curNamespaces(flags)
-	if err == nil && restorable(flags) {
-		runtime.UnlockOSThread()
-	}
-	return s, err
+	return curNamespaces(flags)
 }
 
 func curNamespaces(flags int) (s Set, retErr error) {

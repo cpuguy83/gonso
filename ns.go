@@ -200,6 +200,68 @@ func (s Set) Unshare(flags int) (Set, error) {
 	return r.s, r.err
 }
 
+// Unshare returns a new `Set` with the namespaces specified in `flags` unshared (i.e. new namespaces are created).
+// The returned set only contains the namespaces specified in `flags`.
+// This is the same as calling `Current(flags).Unshare(flags)`.
+func Unshare(flags int) (Set, error) {
+	s, err := Current(flags)
+	if err != nil {
+		return Set{}, err
+	}
+	return s.Unshare(flags)
+}
+
+// FromPid returns a `Set` for the given pid and namespace flags.
+//
+// This requires `pidfd_open(2)` support which was first added in kernel 5.13.
+func FromPid(pid int, flags int) (Set, error) {
+	type result struct {
+		s   Set
+		err error
+	}
+
+	if flags&unix.CLONE_NEWUSER != 0 {
+		return Set{}, fmt.Errorf("setns(2) does not support joining a user namespace from a multithreaded process: %w", unix.EINVAL)
+	}
+
+	ch := make(chan result)
+	go func() {
+		newS, err := func() (_ Set, retErr error) {
+			runtime.LockOSThread()
+
+			curr, err := curNamespaces(flags)
+			if err != nil {
+				return Set{}, err
+			}
+
+			pidFD, err := unix.PidfdOpen(pid, 0)
+			if err != nil {
+				return Set{}, err
+			}
+			defer unix.Close(pidFD)
+
+			if err := unix.Setns(pidFD, flags); err != nil {
+				return Set{}, fmt.Errorf("error joining namespaces: %w", err)
+			}
+
+			newS, err := curNamespaces(flags)
+			if err != nil {
+				return Set{}, fmt.Errorf("error getting namespaces: %w", err)
+			}
+
+			if err := curr.set(); err == nil {
+				runtime.UnlockOSThread()
+			}
+
+			return newS, nil
+		}()
+		ch <- result{s: newS, err: err}
+	}()
+
+	r := <-ch
+	return r.s, r.err
+}
+
 func restorable(flags int) bool {
 	return flags&nonReversibleFlags == 0
 }

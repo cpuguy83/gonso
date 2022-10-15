@@ -22,6 +22,17 @@ func TestUnshare(t *testing.T) {
 	})
 }
 
+func getNS(t *testing.T, ns string) string {
+	t.Helper()
+
+	p := "/proc/thread-self/ns/" + ns
+	l, err := os.Readlink(p)
+	if err != nil {
+		t.Fatalf("readlink %s: %v", p, err)
+	}
+	return l
+}
+
 func testUnshare(t *testing.T, restore bool) func(t *testing.T) {
 	return func(t *testing.T) {
 		dir := t.TempDir()
@@ -33,17 +44,6 @@ func testUnshare(t *testing.T, restore bool) func(t *testing.T) {
 				t.Log(err)
 			}
 		}()
-
-		getNs := func(ns string) string {
-			t.Helper()
-
-			p := "/proc/thread-self/ns/" + ns
-			l, err := os.Readlink(p)
-			if err != nil {
-				t.Fatalf("readlink %s: %v", p, err)
-			}
-			return l
-		}
 
 		nsName := "net"
 		ns := nsFlags[nsName]
@@ -62,7 +62,7 @@ func testUnshare(t *testing.T, restore bool) func(t *testing.T) {
 
 		var p1, p2 string
 		err = s.Do(func() bool {
-			p1 = getNs(nsName)
+			p1 = getNS(t, nsName)
 			return restore
 		}, restore)
 		if err != nil {
@@ -70,7 +70,7 @@ func testUnshare(t *testing.T, restore bool) func(t *testing.T) {
 		}
 
 		err = newS.Do(func() bool {
-			p2 = getNs(nsName)
+			p2 = getNS(t, nsName)
 			return restore
 		}, restore)
 		if err != nil {
@@ -80,6 +80,60 @@ func testUnshare(t *testing.T, restore bool) func(t *testing.T) {
 		if p1 == p2 {
 			t.Fatal("expected new namespace")
 		}
+	}
+}
+
+func TestFromPid(t *testing.T) {
+	name := "net"
+	ns := nsFlags[name]
+	cur, err := Current(ns)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cur.Close()
+
+	unshared, err := cur.Unshare(ns)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unshared.Close()
+
+	pidS, err := FromPid(os.Getpid(), ns)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var unsharedP, pidP string
+
+	err = unshared.Do(func() bool {
+		unsharedP = getNS(t, name)
+		return false
+	}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = pidS.Do(func() bool {
+		pidP = getNS(t, name)
+		return false
+	}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if unsharedP == pidP {
+		t.Error("expected different namespaces")
+	}
+
+	err = cur.Do(func() bool {
+		curP := getNS(t, name)
+		if curP != pidP {
+			t.Error("expected same namespaces")
+		}
+		return false
+	}, false)
+	if err != nil {
+		t.Fatal(err)
 	}
 }
 

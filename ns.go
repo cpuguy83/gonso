@@ -209,6 +209,9 @@ var (
 //
 // If `flags` is 0, all namespaces are returned.
 func Current(flags int) (Set, error) {
+	runtime.UnlockOSThread()
+	defer runtime.LockOSThread()
+
 	if flags == 0 {
 		flags = NS_CGROUP | NS_IPC | NS_MNT | NS_NET | NS_PID | NS_TIME | NS_USER | NS_UTS
 	}

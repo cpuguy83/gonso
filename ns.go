@@ -147,6 +147,10 @@ func (s Set) Do(f func() bool, restore bool) error {
 //
 // This does not change the current set of namespaces, it only creates a new set of namespaces that
 // can be used later with the returned `Set`, e.g. `newSet.Do(func() { ... })`.
+//
+// CLONE_NEWUSER is not supported by this function due to limitations imposed by
+// the kernel.  While it is possible to call unshare(CLONE_NEWUSER), it is not
+// possible to setns(2) to a user namespace from a multi-threaded program.
 func (s Set) Unshare(flags int) (Set, error) {
 	type result struct {
 		s   Set

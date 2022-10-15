@@ -153,6 +153,10 @@ func (s Set) Unshare(flags int) (Set, error) {
 		err error
 	}
 
+	if flags&unix.CLONE_NEWUSER != 0 {
+		return Set{}, fmt.Errorf("setns(2) does not support joining a user namespace from a multithreaded process: %w", unix.EINVAL)
+	}
+
 	ch := make(chan result)
 	go func() {
 		runtime.LockOSThread()
@@ -221,7 +225,8 @@ func Current(flags int) (Set, error) {
 	defer runtime.LockOSThread()
 
 	if flags == 0 {
-		flags = NS_CGROUP | NS_IPC | NS_MNT | NS_NET | NS_PID | NS_TIME | NS_USER | NS_UTS
+		// NS_USER is intentionally not included here since it is not supported by setns(2) from a multithreaded program.
+		flags = NS_CGROUP | NS_IPC | NS_MNT | NS_NET | NS_PID | NS_TIME | NS_UTS
 	}
 	return curNamespaces(flags)
 }

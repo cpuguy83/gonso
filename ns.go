@@ -157,30 +157,39 @@ func (s Set) Unshare(flags int) (Set, error) {
 		return Set{}, fmt.Errorf("setns(2) does not support joining a user namespace from a multithreaded process: %w", unix.EINVAL)
 	}
 
+	restore := flags&nonReversibleFlags == 0
+
 	ch := make(chan result)
 	go func() {
-		runtime.LockOSThread()
-		defer runtime.UnlockOSThread()
-
-		if err := unix.Unshare(flags); err != nil {
-			ch <- result{err: fmt.Errorf("error unsharing namespaces: %w", err)}
-			return
-		}
-
-		newS, err := curNamespaces(flags)
-		if err != nil {
-			ch <- result{err: fmt.Errorf("error getting namespaces: %w", err)}
-			return
-		}
-		ch <- result{s: newS}
-
-		// Try to restore this thread so it can be re-used be go.
-		if err := s.set(); err != nil {
-			// Re-lock the thread so the defer above does not unlock it
-			// This thread is now in a bad state and should not be re-used.
+		newS, err := func() (_ Set, retErr error) {
 			runtime.LockOSThread()
-			return
-		}
+			defer func() {
+				// Only unlock this thread if there are no errors.
+				// Additionally should not unlock threads that have had non-reversiable changes made to them.
+				if retErr == nil && restore {
+					runtime.UnlockOSThread()
+				}
+			}()
+
+			if err := unix.Unshare(flags); err != nil {
+				return Set{}, fmt.Errorf("error unsharing namespaces: %w", err)
+			}
+
+			newS, err := curNamespaces(flags)
+			if err != nil {
+				return Set{}, fmt.Errorf("error getting namespaces: %w", err)
+			}
+
+			// Try to restore this thread so it can be re-used be go.
+			if restore {
+				if err := s.set(); err != nil {
+					return Set{}, err
+				}
+			}
+
+			return newS, nil
+		}()
+		ch <- result{s: newS, err: err}
 	}()
 
 	r := <-ch
@@ -222,12 +231,16 @@ var (
 // If `flags` is 0, all namespaces are returned.
 func Current(flags int) (Set, error) {
 	runtime.UnlockOSThread()
-	defer runtime.LockOSThread()
 
 	if flags == 0 {
 		// NS_USER is intentionally not included here since it is not supported by setns(2) from a multithreaded program.
 		flags = NS_CGROUP | NS_IPC | NS_MNT | NS_NET | NS_PID | NS_TIME | NS_UTS
 	}
+
+	if flags&nonReversibleFlags == 0 {
+		defer runtime.LockOSThread()
+	}
+
 	return curNamespaces(flags)
 }
 

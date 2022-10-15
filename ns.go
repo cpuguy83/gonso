@@ -31,6 +31,11 @@ func (s Set) Close() error {
 // set sets the current thread to the namespaces in the set.
 // Errors are ignored if the current and target namespace are the same.
 func (s Set) set() error {
+	if s.flags&unix.CLONE_NEWNS != 0 {
+		if err := unix.Unshare(unix.CLONE_FS); err != nil {
+			return fmt.Errorf("error performing implicit unshare on CLONE_FS: %w", err)
+		}
+	}
 	for _, fd := range s.fds {
 		if err := unix.Setns(int(fd.Fd()), nsFlags[filepath.Base(fd.Name())]); err != nil {
 			fdCur, _ := os.Readlink(filepath.Join("/proc/thread-self/ns", filepath.Base(fd.Name())))
@@ -85,6 +90,9 @@ const nonReversibleFlags = unix.CLONE_NEWUSER | unix.CLONE_NEWIPC | unix.CLONE_F
 //
 // The passed in function should not create any new goroutinues or those goroutines will not be in the correct namespace.
 // If you need to create a goroutine and want it to be in the correct namespace, call `set.Do` again from that goroutine.
+//
+// If the stored namespaces includes a mount namespace, then CLONE_FS will also be implicitly unshared
+// since it is impossible to setns to a mount namespace without also unsharing CLONE_FS.
 func (s Set) Do(f func() bool, restore bool) error {
 	chErr := make(chan error, 1)
 	var cur Set

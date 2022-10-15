@@ -111,11 +111,10 @@ func (s Set) Do(f func() bool, restore bool) error {
 				return fmt.Errorf("error setting namespaces: %w", err)
 			}
 
-			restoreF := f()
-			if !restore {
+			if !f() {
 				return nil
 			}
-			if !restoreF {
+			if !restore {
 				return nil
 			}
 

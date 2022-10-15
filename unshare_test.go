@@ -34,15 +34,15 @@ func testUnshare(t *testing.T, restore bool) func(t *testing.T) {
 			}
 		}()
 
-		getNs := func(ns string) (string, error) {
+		getNs := func(ns string) string {
 			t.Helper()
 
 			p := "/proc/thread-self/ns/" + ns
 			l, err := os.Readlink(p)
 			if err != nil {
-				return "", fmt.Errorf("readlink %s: %w", p, err)
+				t.Fatalf("readlink %s: %v", p, err)
 			}
-			return l, nil
+			return l
 		}
 
 		nsName := "net"
@@ -61,25 +61,18 @@ func testUnshare(t *testing.T, restore bool) func(t *testing.T) {
 		defer newS.Close()
 
 		var p1, p2 string
-		var pErr error
 		err = s.Do(func() bool {
-			p1, pErr = getNs(nsName)
-			return pErr == nil
+			p1 = getNs(nsName)
+			return restore
 		}, restore)
-		if pErr != nil {
-			t.Fatal(pErr)
-		}
 		if err != nil {
 			t.Fatal(err)
 		}
 
 		err = newS.Do(func() bool {
-			p2, pErr = getNs(nsName)
-			return pErr == nil
+			p2 = getNs(nsName)
+			return restore
 		}, restore)
-		if pErr != nil {
-			t.Fatal(pErr)
-		}
 		if err != nil {
 			t.Fatal(err)
 		}

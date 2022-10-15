@@ -96,7 +96,7 @@ func (s Set) Do(f func() bool, restore bool) error {
 
 	if restore {
 		var err error
-		cur, err := Current(s.flags)
+		cur, err = Current(s.flags)
 		if err != nil {
 			restore = true
 		}

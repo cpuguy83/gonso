@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 
@@ -40,7 +39,7 @@ func testUnshare(t *testing.T, restore bool) func(t *testing.T) {
 		getNs := func(ns string) (*os.File, error) {
 			t.Helper()
 
-			p := "/proc/self/task/" + strconv.Itoa(unix.Gettid()) + "/ns/" + ns
+			p := "/proc/thread-self/ns/" + ns
 			l, err := os.Readlink(p)
 			if err != nil {
 				return nil, fmt.Errorf("readlink %s: %w", p, err)

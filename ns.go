@@ -33,7 +33,7 @@ func (s Set) Close() error {
 func (s Set) set() error {
 	for _, fd := range s.fds {
 		if err := unix.Setns(int(fd.Fd()), nsFlags[filepath.Base(fd.Name())]); err != nil {
-			fdCur, _ := os.Readlink(fmt.Sprintf("/proc/self/task/%d/ns/%s", unix.Gettid(), filepath.Base(fd.Name())))
+			fdCur, _ := os.Readlink(filepath.Join("/proc/thread-self/ns", filepath.Base(fd.Name())))
 			fdNew, _ := os.Readlink(fd.Name())
 			if fdCur == fdNew && fdCur != "" {
 				// Ignore this error if the namespace is already set to the same value
@@ -155,7 +155,7 @@ func (s Set) Unshare(flags int) (Set, error) {
 			return
 		}
 
-		newS, err := namespacesFor(unix.Gettid(), flags)
+		newS, err := curNamespaces(flags)
 		if err != nil {
 			ch <- result{err: fmt.Errorf("error getting namespaces: %w", err)}
 			return
@@ -215,17 +215,16 @@ func Current(flags int) (Set, error) {
 	if flags == 0 {
 		flags = NS_CGROUP | NS_IPC | NS_MNT | NS_NET | NS_PID | NS_TIME | NS_USER | NS_UTS
 	}
-	return namespacesFor(unix.Gettid(), flags)
+	return curNamespaces(flags)
 }
 
-func namespacesFor(tid, flags int) (s Set, retErr error) {
+func curNamespaces(flags int) (s Set, retErr error) {
 	defer func() {
 		if retErr != nil {
 			s.Close()
 		}
 	}()
 
-	p := fmt.Sprintf("/proc/self/task/%d/ns", tid)
 	s.fds = make(map[int]*os.File, len(nsFlags))
 	s.flags = flags
 	for name, flag := range nsFlags {
@@ -233,7 +232,7 @@ func namespacesFor(tid, flags int) (s Set, retErr error) {
 			continue
 		}
 
-		fd, err := os.Open(fmt.Sprintf("%s/%s", p, name))
+		fd, err := os.Open(filepath.Join("/proc/thread-self/ns", name))
 		if err != nil {
 			return Set{}, fmt.Errorf("error opening namespace file: %w", err)
 		}

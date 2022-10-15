@@ -98,8 +98,8 @@ func (s Set) Do(f func() bool, restore bool) error {
 	var cur Set
 
 	// Some flags are not reversible so don't even bother trying to restore the thread.
-	if s.flags&nonReversibleFlags != 0 {
-		restore = false
+	if restore {
+		restore = restorable(s.flags)
 	}
 
 	if restore {
@@ -157,7 +157,7 @@ func (s Set) Unshare(flags int) (Set, error) {
 		return Set{}, fmt.Errorf("setns(2) does not support joining a user namespace from a multithreaded process: %w", unix.EINVAL)
 	}
 
-	restore := flags&nonReversibleFlags == 0
+	restore := restorable(flags)
 
 	ch := make(chan result)
 	go func() {
@@ -194,6 +194,10 @@ func (s Set) Unshare(flags int) (Set, error) {
 
 	r := <-ch
 	return r.s, r.err
+}
+
+func restorable(flags int) bool {
+	return flags&nonReversibleFlags == 0
 }
 
 // These are the flags that can be passed to `Unshare` and `Current`.

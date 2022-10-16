@@ -4,7 +4,7 @@ Gonso is a library to do safe Linux [namespace](https://man7.org/linux/man-pages
 
 ### Why?
 
-Linux namespaces are per-thread, but Go programs don't direct access to threads.
+Linux namespaces are per-thread, but Go programs don't have direct access to threads.
 Doing namespace manipulation in Go requires careful use of
 `runtime.LockOSThread()` and `runtime.UnlockOSThread()`. Linux namespaces can
 have special rules for how they interact with each other and when/how you can

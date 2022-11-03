@@ -211,6 +211,47 @@ func Unshare(flags int) (Set, error) {
 	return s.Unshare(flags)
 }
 
+// Mount the set's namespaces to the specified target directory with each
+// namespace being mounted to a file named after the namespace type as seen in
+// procfs.
+//
+// The target directory must already exist.
+// It is up to the caller to clean up mounts.
+//
+// If the set contains a mount namespace it is the caller's responsibility to
+// make sure that the mounts performed here are propagated to caller's
+// desired mount namespace.
+//
+// Mounting a mount namespace is also tricky see the mount(2) documentation for details.
+// In particular, mounting a mount namespace magic link may cause EINVAL if the parent uses MS_SHARED.
+func (s Set) Mount(target string) error {
+	var err error
+
+	err2 := s.Do(func() bool {
+		for id := range s.fds {
+			name := nsFlagsReverse[id]
+			p := filepath.Join("/proc/thread-self/ns", name)
+
+			var f *os.File
+			f, err = os.Create(filepath.Join(target, name))
+			if err != nil {
+				err = fmt.Errorf("error creating file for ns %s: %w", name, err)
+				return false
+			}
+			f.Close()
+			if err = unix.Mount(p, filepath.Join(target, name), "none", unix.MS_BIND, ""); err != nil {
+				err = fmt.Errorf("error mounting ns %s: %w", name, err)
+				return false
+			}
+		}
+		return false
+	}, false)
+	if err2 != nil {
+		return err2
+	}
+	return err
+}
+
 // FromPid returns a `Set` for the given pid and namespace flags.
 //
 // This requires `pidfd_open(2)` support which was first added in kernel 5.13.
@@ -293,6 +334,17 @@ var (
 		"time":   unix.CLONE_NEWTIME,
 		"user":   unix.CLONE_NEWUSER,
 		"uts":    unix.CLONE_NEWUTS,
+	}
+
+	nsFlagsReverse = map[int]string{
+		unix.CLONE_NEWCGROUP: "cgroup",
+		unix.CLONE_NEWIPC:    "ipc",
+		unix.CLONE_NEWNS:     "mnt",
+		unix.CLONE_NEWNET:    "net",
+		unix.CLONE_NEWPID:    "pid",
+		unix.CLONE_NEWTIME:   "time",
+		unix.CLONE_NEWUSER:   "user",
+		unix.CLONE_NEWUTS:    "uts",
 	}
 )
 

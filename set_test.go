@@ -75,3 +75,72 @@ func TestMount(t *testing.T) {
 		}
 	}
 }
+
+func TestDup(t *testing.T) {
+	t.Run("some fds", func(t *testing.T) {
+		s, err := Current(0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer s.Close()
+		dup, err := s.Dup(NS_NET | NS_IPC)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer dup.Close()
+
+		if len(dup.fds) != 2 {
+			t.Errorf("expected 2 fds, got %d", len(dup.fds))
+		}
+
+		_, ok := dup.fds[NS_NET]
+		if !ok {
+			t.Error("expected net fd")
+		}
+
+		_, ok = dup.fds[NS_IPC]
+		if !ok {
+			t.Error("expected ipc fd")
+		}
+
+		if err := s.Close(); err != nil {
+			t.Fatal(err)
+		}
+
+		// Make sure `Do` still works after the original set is closed
+		if err := dup.Do(func() bool {
+			return false
+		}, false); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	t.Run("all fds", func(t *testing.T) {
+		s, err := Current(0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer s.Close()
+
+		dup2, err := s.Dup(0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer dup2.Close()
+		if len(dup2.fds) != len(s.fds) {
+			t.Errorf("expected 0 fds, got %d", len(dup2.fds))
+		}
+
+		if err := s.Close(); err != nil {
+			t.Fatal(err)
+		}
+
+		// Make sure `Do` still works after the original set is closed
+		if err := dup2.Do(func() bool {
+			return false
+		}, false); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+}

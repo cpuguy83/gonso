@@ -50,11 +50,12 @@ func (s Set) set() error {
 	return nil
 }
 
-// Dup creates a duplicate of the current set by duplicating all the associated
-// namespace file descriptors.
+// Dup creates a duplicate of the current set by duplicating the namespace file descriptors in the set and returning a new set.
+// Specifying `flags` will only duplicate the namespaces specified in `flags`.
+// If flags is 0, all namespaces in the set will be duplicated.
 //
 // The caller is responsible for closing both the current and the new Set.
-func (s Set) Dup() (newS Set, retErr error) {
+func (s Set) Dup(flags int) (newS Set, retErr error) {
 	defer func() {
 		if retErr != nil {
 			newS.Close()
@@ -63,7 +64,15 @@ func (s Set) Dup() (newS Set, retErr error) {
 
 	newS.fds = make(map[int]*os.File, len(s.fds))
 
+	if flags == 0 {
+		flags = s.flags
+	}
+	newS.flags = flags
+
 	for flag, fd := range s.fds {
+		if flags&flag == 0 {
+			continue
+		}
 		newFD, err := unix.Dup(int(fd.Fd()))
 		if err != nil {
 			return Set{}, err
@@ -344,7 +353,6 @@ func curNamespaces(flags int) (s Set, retErr error) {
 		if flags&flag == 0 {
 			continue
 		}
-
 		fd, err := os.Open(filepath.Join("/proc/thread-self/ns", name))
 		if err != nil {
 			return Set{}, fmt.Errorf("error opening namespace file: %w", err)

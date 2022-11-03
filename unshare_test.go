@@ -84,8 +84,6 @@ func testUnshare(t *testing.T, restore bool) func(t *testing.T) {
 }
 
 func TestFromPid(t *testing.T) {
-	t.Skip("test is flakey")
-
 	name := "net"
 	ns := nsFlags[name]
 	cur, err := Current(ns)
@@ -134,6 +132,48 @@ func TestFromPid(t *testing.T) {
 		}
 		return false
 	}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestFromDir(t *testing.T) {
+	flags := unix.CLONE_NEWNET | unix.CLONE_NEWIPC
+
+	curr, err := Current(flags)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer curr.Close()
+
+	set, err := curr.Unshare(flags)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer set.Close()
+
+	tmp := t.TempDir()
+	if err := unix.Mount(tmp, tmp, "none", unix.MS_BIND, ""); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		unix.Unmount(tmp, unix.MNT_DETACH)
+	}()
+
+	if err := set.Mount(tmp); err != nil {
+		t.Fatal(err)
+	}
+
+	set.Close()
+
+	set, err = FromDir(tmp, flags)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = set.Do(func() bool {
+		return true
+	}, true)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -244,55 +244,31 @@ func (s Set) Mount(target string) error {
 	return err
 }
 
+// FromDir creates a set of namespaces from the specified directory.
+// As an example, you could use the `Set.Mount` function and then use this to create a new set from those mounts.
+// Or you can even point directly at /proc/<pid>/ns.
+func FromDir(dir string, flags int) (Set, error) {
+	s := Set{flags: flags, fds: make(map[int]*os.File)}
+
+	for kind, name := range nsFlagsReverse {
+		if flags&kind == 0 {
+			continue
+		}
+
+		f, err := os.Open(filepath.Join(dir, name))
+		if err != nil {
+			return Set{}, fmt.Errorf("error opening %s: %w", name, err)
+		}
+
+		s.fds[kind] = f
+	}
+
+	return s, nil
+}
+
 // FromPid returns a `Set` for the given pid and namespace flags.
-//
-// This requires `pidfd_open(2)` support which was first added in kernel 5.13.
 func FromPid(pid int, flags int) (Set, error) {
-	type result struct {
-		s   Set
-		err error
-	}
-
-	if flags&unix.CLONE_NEWUSER != 0 {
-		return Set{}, fmt.Errorf("setns(2) does not support joining a user namespace from a multithreaded process: %w", unix.EINVAL)
-	}
-
-	ch := make(chan result)
-	go func() {
-		newS, err := func() (_ Set, retErr error) {
-			runtime.LockOSThread()
-
-			curr, err := curNamespaces(flags)
-			if err != nil {
-				return Set{}, err
-			}
-
-			pidFD, err := unix.PidfdOpen(pid, 0)
-			if err != nil {
-				return Set{}, err
-			}
-			defer unix.Close(pidFD)
-
-			if err := unix.Setns(pidFD, flags); err != nil {
-				return Set{}, fmt.Errorf("error joining namespaces: %w", err)
-			}
-
-			newS, err := curNamespaces(flags)
-			if err != nil {
-				return Set{}, fmt.Errorf("error getting namespaces: %w", err)
-			}
-
-			if err := curr.set(); err == nil {
-				runtime.UnlockOSThread()
-			}
-
-			return newS, nil
-		}()
-		ch <- result{s: newS, err: err}
-	}()
-
-	r := <-ch
-	return r.s, r.err
+	return FromDir(fmt.Sprintf("/proc/%d/ns", pid), flags)
 }
 
 func restorable(flags int) bool {

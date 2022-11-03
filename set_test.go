@@ -65,6 +65,7 @@ func TestMount(t *testing.T) {
 		err = unix.Setns(fd, unix.CLONE_NEWNET)
 		if err != nil {
 			ch <- fmt.Errorf("setns net: %w", err)
+			return
 		}
 	}()
 

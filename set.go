@@ -227,28 +227,20 @@ func Unshare(flags int) (Set, error) {
 func (s Set) Mount(target string) error {
 	var err error
 
-	err2 := s.Do(func() bool {
-		for id := range s.fds {
-			name := nsFlagsReverse[id]
-			p := filepath.Join("/proc/thread-self/ns", name)
+	for kind, fd := range s.fds {
+		name := nsFlagsReverse[kind]
 
-			var f *os.File
-			f, err = os.Create(filepath.Join(target, name))
-			if err != nil {
-				err = fmt.Errorf("error creating file for ns %s: %w", name, err)
-				return false
-			}
-			f.Close()
-			if err = unix.Mount(p, filepath.Join(target, name), "none", unix.MS_BIND, ""); err != nil {
-				err = fmt.Errorf("error mounting ns %s: %w", name, err)
-				return false
-			}
+		f, err := os.Create(filepath.Join(target, name))
+		if err != nil {
+			return fmt.Errorf("error creating target file for %s: %w", name, err)
 		}
-		return false
-	}, false)
-	if err2 != nil {
-		return err2
+		f.Close()
+
+		if err := unix.Mount(fmt.Sprintf("/proc/self/fd/%d", fd.Fd()), f.Name(), "", unix.MS_BIND, ""); err != nil {
+			return fmt.Errorf("error mounting %s: %w", name, err)
+		}
 	}
+
 	return err
 }
 

@@ -1,12 +1,14 @@
 package gonso
 
 import (
+	"strconv"
+
 	"golang.org/x/sys/unix"
 )
 
-func memfd() (int, error) {
+func memfd(id string) (int, error) {
 	for {
-		fd, err := unix.MemfdCreate("gonso", unix.MFD_CLOEXEC)
+		fd, err := unix.MemfdCreate("gonso-"+id, unix.MFD_CLOEXEC)
 		if err == nil {
 			return fd, nil
 		}
@@ -17,7 +19,7 @@ func memfd() (int, error) {
 }
 
 func dup(fd int) (int, error) {
-	nfd, err := memfd()
+	nfd, err := memfd(strconv.Itoa(fd))
 	if err != nil {
 		return -1, err
 	}

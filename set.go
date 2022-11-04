@@ -260,10 +260,6 @@ func doClone(flags int) (Set, error) {
 	return r.s, r.err
 }
 
-func doCloneChild(pipeFd int) {
-
-}
-
 // Unshare returns a new `Set` with the namespaces specified in `flags` unshared (i.e. new namespaces are created).
 // The returned set only contains the namespaces specified in `flags`.
 // This is the same as calling `Current(flags).Unshare(flags)`.

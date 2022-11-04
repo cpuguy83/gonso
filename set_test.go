@@ -93,14 +93,11 @@ func TestDup(t *testing.T) {
 			t.Errorf("expected 2 fds, got %d", len(dup.fds))
 		}
 
-		_, ok := dup.fds[NS_NET]
-		if !ok {
-			t.Error("expected net fd")
+		if s.testGetID(t, NS_NET) != dup.testGetID(t, NS_NET) {
+			t.Error("net ns id mismatch")
 		}
-
-		_, ok = dup.fds[NS_IPC]
-		if !ok {
-			t.Error("expected ipc fd")
+		if s.testGetID(t, NS_IPC) != dup.testGetID(t, NS_IPC) {
+			t.Error("ipc ns id mismatch")
 		}
 
 		if err := s.Close(); err != nil {
@@ -129,6 +126,15 @@ func TestDup(t *testing.T) {
 			t.Errorf("expected 0 fds, got %d", len(dup2.fds))
 		}
 
+		for ns, fd := range s.fds {
+			if s.testGetID(t, ns) != dup2.testGetID(t, ns) {
+				t.Errorf("%d ns id mismatch", ns)
+			}
+			if fd == dup2.fds[ns] {
+				t.Errorf("expected new fd")
+			}
+		}
+
 		if err := s.Close(); err != nil {
 			t.Fatal(err)
 		}
@@ -141,4 +147,14 @@ func TestDup(t *testing.T) {
 		}
 	})
 
+}
+
+func (s Set) testGetID(t *testing.T, ns int) string {
+	t.Helper()
+
+	id, err := s.ID(ns)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return id
 }

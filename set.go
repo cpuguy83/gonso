@@ -35,13 +35,21 @@ func (s Set) Close() error {
 
 // set sets the current thread to the namespaces in the set.
 // Errors are ignored if the current and target namespace are the same.
-func (s Set) set() error {
+//
+// If skipUser is true, then the user namespace is not set.
+// This is useful when `Unshare` is called with an existing userns in the set.
+// We can't setns to the userns here because of how user namespaces work, but in some cases we can fork and set the namespace in the child.
+// In those cases `set` is just used to set all the other namespaces first.
+func (s Set) set(skipUser bool) error {
 	if s.flags&unix.CLONE_NEWNS != 0 {
 		if err := unshare(unix.CLONE_FS); err != nil {
 			return fmt.Errorf("error performing implicit unshare on CLONE_FS: %w", err)
 		}
 	}
 	for kind, fd := range s.fds {
+		if kind == unix.CLONE_NEWUSER && skipUser {
+			continue
+		}
 		name := nsFlagsReverse[kind]
 		if err := setns(fd, kind); err != nil {
 			fdCur, _ := os.Readlink(filepath.Join("/proc/thread-self/ns", name))
@@ -105,6 +113,17 @@ func (s Set) Fds(flags int) (_ FdSet, retErr error) {
 	return rawSet, nil
 }
 
+// ID gets the id of the namespace for the given flag.
+// Only one flag should ever be provided.
+func (s Set) ID(flag int) (string, error) {
+	fd, ok := s.fds[flag]
+	if !ok {
+		return "", fmt.Errorf("flag not in set for %s", nsFlagsReverse[flag])
+	}
+	return os.Readlink("/proc/self/fd/" + strconv.Itoa(fd))
+
+}
+
 // Dup creates a duplicate of the current set by duplicating the namespace file descriptors in the set and returning a new set.
 // Specifying `flags` will only duplicate the namespaces specified in `flags`.
 // If flags is 0, all namespaces in the set will be duplicated.
@@ -165,6 +184,8 @@ func (s Set) Do(f func()) error {
 //
 // If the stored namespaces includes a mount namespace, then CLONE_FS will also be implicitly unshared
 // since it is impossible to setns to a mount namespace without also unsharing CLONE_FS.
+//
+// If the stored namespaces includes a user namespace, then Do is expected to fail.
 func (s Set) DoRaw(f func() bool, restore bool) error {
 	chErr := make(chan error, 1)
 	var cur Set
@@ -187,7 +208,7 @@ func (s Set) DoRaw(f func() bool, restore bool) error {
 		chErr <- func() (retErr error) {
 			runtime.LockOSThread()
 
-			if err := s.set(); err != nil {
+			if err := s.set(false); err != nil {
 				return fmt.Errorf("error setting namespaces: %w", err)
 			}
 
@@ -198,7 +219,7 @@ func (s Set) DoRaw(f func() bool, restore bool) error {
 				return nil
 			}
 
-			if err := cur.set(); err != nil {
+			if err := cur.set(false); err != nil {
 				return fmt.Errorf("error restoring namespaces: %w", err)
 			}
 
@@ -213,6 +234,40 @@ func (s Set) DoRaw(f func() bool, restore bool) error {
 	}()
 
 	return <-chErr
+}
+
+func merge(orig Set, newS *Set) (retErr error) {
+	if orig.flags == newS.flags {
+		return nil
+	}
+
+	tmp := make(map[int]int, len(orig.fds)+len(newS.fds))
+	defer func() {
+		if retErr != nil {
+			for _, fd := range tmp {
+				sys_close(fd)
+			}
+		}
+	}()
+
+	for kind, fd := range orig.fds {
+		if newS.flags&kind != 0 {
+			continue
+		}
+
+		nfd, err := dup(fd)
+		if err != nil {
+			return err
+		}
+		tmp[kind] = nfd
+	}
+
+	for kind, fd := range tmp {
+		newS.fds[kind] = fd
+		newS.flags |= kind
+	}
+
+	return nil
 }
 
 // Unshare creates a new set with the namespaces specified in `flags` unshared (i.e. new namespaces are created).
@@ -235,8 +290,26 @@ func (s Set) Unshare(flags int) (Set, error) {
 	ch := make(chan result)
 	go func() {
 		newS, err := func() (_ Set, retErr error) {
-			if flags&unix.CLONE_NEWUSER != 0 {
-				return doClone(flags)
+			if flags&unix.CLONE_NEWUSER != 0 || s.flags&unix.CLONE_NEWUSER != 0 {
+				// If we are creating a new user namespace, we need to fork a new process
+				// If the Set already contains a user namespace and we are not creating a new one, then we also need to join the user namespace before creating the new namespaces.
+				// This ensures the new namespaces are bouond to the user namespace.
+				usernsFd := -1
+				if s.flags&unix.CLONE_NEWUSER != 0 && flags&unix.CLONE_NEWUSER == 0 {
+					usernsFd = s.fds[unix.CLONE_NEWUSER]
+				}
+				if err := s.set(true); err != nil {
+					return Set{}, err
+				}
+				newS, err := doClone(flags, usernsFd)
+				if err != nil {
+					return Set{}, err
+				}
+				if err := merge(s, &newS); err != nil {
+					newS.Close()
+					return Set{}, err
+				}
+				return newS, nil
 			}
 
 			runtime.LockOSThread()
@@ -259,7 +332,7 @@ func (s Set) Unshare(flags int) (Set, error) {
 
 			// Try to restore this thread so it can be re-used be go.
 			if restore {
-				if err := s.set(); err != nil {
+				if err := s.set(false); err != nil {
 					return Set{}, err
 				}
 			}
@@ -333,7 +406,8 @@ func FromDir(dir string, flags int) (_ Set, retErr error) {
 			continue
 		}
 
-		f, err := open(filepath.Join(dir, name))
+		p := filepath.Join(dir, name)
+		f, err := open(p)
 		if err != nil {
 			return Set{}, fmt.Errorf("error opening %s: %w", name, err)
 		}
@@ -418,6 +492,7 @@ func curNamespaces(flags int) (s Set, retErr error) {
 
 	s.fds = make(map[nsFlag]int, len(nsFlags))
 	s.flags = flags
+
 	for name, flag := range nsFlags {
 		if flags&flag == 0 {
 			continue

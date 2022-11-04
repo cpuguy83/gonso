@@ -1,15 +1,17 @@
 package gonso
 
 import (
+	"context"
 	"fmt"
 	"runtime"
 	"syscall"
+	"time"
 	"unsafe"
 
 	"golang.org/x/sys/unix"
 )
 
-func doClone(flags int) (Set, error) {
+func doClone(flags, usernsFd int) (Set, error) {
 	type result struct {
 		s   Set
 		err error
@@ -37,9 +39,14 @@ func doClone(flags int) (Set, error) {
 		}
 		if pid == 0 {
 			// child process
-			_, _, errno := unix.RawSyscall(unix.SYS_READ, uintptr(pipe[0]), uintptr(_p0), uintptr(len(buf)))
-			syscall.RawSyscall(unix.SYS_EXIT, uintptr(errno), 0, 0)
-			return
+			if usernsFd >= 0 {
+				_, _, errno := syscall.RawSyscall(unix.SYS_SETNS, uintptr(usernsFd), uintptr(unix.CLONE_NEWUSER), 0)
+				if errno != 0 {
+					syscall.RawSyscall(unix.SYS_EXIT_GROUP, uintptr(errno), 0, 0)
+				}
+			}
+			_, _, errno = unix.RawSyscall(unix.SYS_READ, uintptr(pipe[0]), uintptr(_p0), uintptr(len(buf)))
+			syscall.RawSyscall(unix.SYS_EXIT_GROUP, uintptr(errno), 0, 0)
 		}
 
 		set, err := FromDir(fmt.Sprintf("/proc/%d/ns", pid), flags)

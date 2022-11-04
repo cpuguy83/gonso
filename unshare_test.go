@@ -88,6 +88,18 @@ func TestFromPid(t *testing.T) {
 	}
 	defer unshared.Close()
 
+	for kind := range cur.fds {
+		if kind == ns {
+			if cur.testGetID(t, kind) == unshared.testGetID(t, kind) {
+				t.Fatalf("expected different ID for %s", nsFlagsReverse[kind])
+			}
+		} else {
+			if cur.testGetID(t, kind) != unshared.testGetID(t, kind) {
+				t.Fatalf("expected same ID for %s", nsFlagsReverse[kind])
+			}
+		}
+	}
+
 	pidS, err := FromPid(os.Getpid(), ns)
 	if err != nil {
 		t.Fatal(err)
@@ -135,10 +147,26 @@ func TestUserns(t *testing.T) {
 	}
 	defer set.Close()
 
+	if _, ok := set.fds[unix.CLONE_NEWUSER]; !ok {
+		t.Fatal("set should include userns")
+	}
+
 	err = set.DoRaw(func() bool { return true }, true)
 	if err == nil {
 		t.Fatal("exepcted error callindg `Do` with a userns")
 	}
+
+	// Unshare with
+	unshared, err := set.Unshare(unix.CLONE_NEWIPC)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if set.testGetID(t, unix.CLONE_NEWUSER) != unshared.testGetID(t, unix.CLONE_NEWUSER) {
+		t.Fatal("expected same user id")
+	}
+
+	unshared.Close()
 
 	tmp := t.TempDir()
 	if err := mount(tmp, tmp, false); err != nil {

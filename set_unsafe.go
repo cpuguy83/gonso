@@ -30,8 +30,10 @@ func doClone(flags, usernsFd int) (Set, error) {
 		buf := make([]byte, 1)
 		_p0 := unsafe.Pointer(&buf[0])
 
-		pid, errno := sys_clone(flags)
+		beforeFork()
+		pid, _, errno := unix.RawSyscall6(unix.SYS_CLONE, uintptr(unix.SIGCHLD)|unix.CLONE_CLEAR_SIGHAND|unix.CLONE_FILES|uintptr(flags), 0, 0, 0, 0, 0)
 		if errno != 0 {
+			afterFork()
 			ch <- result{err: fmt.Errorf("error calling clone: %w", errno)}
 			sys_close(pipe[1])
 			sys_close(pipe[0])
@@ -45,9 +47,14 @@ func doClone(flags, usernsFd int) (Set, error) {
 					syscall.RawSyscall(unix.SYS_EXIT_GROUP, uintptr(errno), 0, 0)
 				}
 			}
-			_, _, errno = unix.RawSyscall(unix.SYS_READ, uintptr(pipe[0]), uintptr(_p0), uintptr(len(buf)))
-			syscall.RawSyscall(unix.SYS_EXIT_GROUP, uintptr(errno), 0, 0)
+
+			// block until the parent process closes this fd
+			unix.RawSyscall(unix.SYS_READ, uintptr(pipe[0]), uintptr(_p0), uintptr(len(buf)))
+			syscall.RawSyscall(unix.SYS_EXIT_GROUP, uintptr(0), 0, 0)
+			panic("unreachable")
 		}
+
+		afterFork()
 
 		set, err := FromDir(fmt.Sprintf("/proc/%d/ns", pid), flags)
 
@@ -72,7 +79,7 @@ func doClone(flags, usernsFd int) (Set, error) {
 		defer cancel()
 		select {
 		case <-ctx.Done():
-			kill(pid)
+			kill(int(pid))
 			err2 := <-chExit
 			if err == nil {
 				err = err2

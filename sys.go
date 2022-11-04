@@ -134,15 +134,3 @@ func unmount(p string) {
 		}
 	}
 }
-
-func sys_clone(flags int) (int, unix.Errno) {
-	for {
-		pid, _, err := unix.RawSyscall6(unix.SYS_CLONE, uintptr(unix.SIGCHLD)|unix.CLONE_CLEAR_SIGHAND|unix.CLONE_FILES|uintptr(flags), 0, 0, 0, 0, 0)
-		if err == 0 {
-			return int(pid), 0
-		}
-		if err != unix.EINTR {
-			return -1, err
-		}
-	}
-}

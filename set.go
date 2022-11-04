@@ -231,7 +231,7 @@ func doClone(flags int) (Set, error) {
 		buf := make([]byte, 1)
 		_p0 := unsafe.Pointer(&buf[0])
 
-		pid, _, errno := unix.RawSyscall6(unix.SYS_CLONE, uintptr(syscall.SIGCHLD)|uintptr(flags), 0, 0, 0, 0, 0)
+		pid, _, errno := unix.RawSyscall6(unix.SYS_CLONE, uintptr(syscall.SIGCHLD)|unix.CLONE_CLEAR_SIGHAND|uintptr(flags), 0, 0, 0, 0, 0)
 		if errno != 0 {
 			ch <- result{err: fmt.Errorf("error calling clone: %w", errno)}
 			unix.Close(pipe[1])

@@ -41,10 +41,9 @@ func (p *Pool) runAfterCreate(s Set) error {
 		return nil
 	}
 	var err error
-	doErr := s.Do(func() bool {
+	doErr := s.Do(func() {
 		err = p.afterCreate()
-		return false
-	}, false)
+	})
 	if doErr != nil {
 		s.Close()
 		return doErr

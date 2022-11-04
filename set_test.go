@@ -108,9 +108,7 @@ func TestDup(t *testing.T) {
 		}
 
 		// Make sure `Do` still works after the original set is closed
-		if err := dup.Do(func() bool {
-			return false
-		}, false); err != nil {
+		if err := dup.Do(func() {}); err != nil {
 			t.Fatal(err)
 		}
 	})
@@ -136,7 +134,7 @@ func TestDup(t *testing.T) {
 		}
 
 		// Make sure `Do` still works after the original set is closed
-		if err := dup2.Do(func() bool {
+		if err := dup2.DoRaw(func() bool {
 			return false
 		}, false); err != nil {
 			t.Fatal(err)

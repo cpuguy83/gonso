@@ -61,7 +61,7 @@ func testUnshare(t *testing.T, restore bool) func(t *testing.T) {
 		defer newS.Close()
 
 		var p1, p2 string
-		err = s.Do(func() bool {
+		err = s.DoRaw(func() bool {
 			p1 = getNS(t, nsName)
 			return restore
 		}, restore)
@@ -69,7 +69,7 @@ func testUnshare(t *testing.T, restore bool) func(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		err = newS.Do(func() bool {
+		err = newS.DoRaw(func() bool {
 			p2 = getNS(t, nsName)
 			return restore
 		}, restore)
@@ -105,7 +105,7 @@ func TestFromPid(t *testing.T) {
 
 	var unsharedP, pidP string
 
-	err = unshared.Do(func() bool {
+	err = unshared.DoRaw(func() bool {
 		unsharedP = getNS(t, name)
 		return false
 	}, false)
@@ -113,7 +113,7 @@ func TestFromPid(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err = pidS.Do(func() bool {
+	err = pidS.DoRaw(func() bool {
 		pidP = getNS(t, name)
 		return false
 	}, false)
@@ -125,7 +125,7 @@ func TestFromPid(t *testing.T) {
 		t.Error("expected different namespaces")
 	}
 
-	err = cur.Do(func() bool {
+	err = cur.DoRaw(func() bool {
 		curP := getNS(t, name)
 		if curP != pidP {
 			t.Error("expected same namespaces")
@@ -145,7 +145,7 @@ func TestUserns(t *testing.T) {
 	}
 	defer set.Close()
 
-	err = set.Do(func() bool { return true }, true)
+	err = set.DoRaw(func() bool { return true }, true)
 	if err == nil {
 		t.Fatal("exepcted error callindg `Do` with a userns")
 	}
@@ -175,7 +175,7 @@ func TestUserns(t *testing.T) {
 	}
 	defer dup.Close()
 
-	err = dup.Do(func() bool { return true }, true)
+	err = dup.DoRaw(func() bool { return true }, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -215,7 +215,7 @@ func TestFromDir(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err = set.Do(func() bool {
+	err = set.DoRaw(func() bool {
 		return true
 	}, true)
 	if err != nil {
@@ -260,7 +260,7 @@ func benchmarkNamespace(b *testing.B, flags int, restore bool) func(b *testing.B
 		b.StartTimer()
 
 		for i := 0; i < b.N; i++ {
-			err := s.Do(func() bool {
+			err := s.DoRaw(func() bool {
 				return restore
 			}, restore)
 			if err != nil {

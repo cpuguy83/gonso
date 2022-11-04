@@ -114,11 +114,12 @@ func kill(pid int) {
 	}
 }
 
-func waitid(pid int) error {
+func wait(pid int) (unix.WaitStatus, error) {
+	var status unix.WaitStatus
 	for {
-		err := unix.Waitid(unix.P_PID, int(pid), nil, unix.WEXITED, nil)
+		_, err := unix.Wait4(int(pid), &status, 0, nil)
 		if err == nil || err != unix.EINTR {
-			return err
+			return status, err
 		}
 	}
 }

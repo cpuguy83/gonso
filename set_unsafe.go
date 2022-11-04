@@ -42,14 +42,40 @@ func doClone(flags int) (Set, error) {
 			return
 		}
 
-		defer func() {
-			sys_close(pipe[0])
-			sys_close(pipe[1])
-			kill(int(pid))
-			waitid(int(pid))
+		set, err := FromDir(fmt.Sprintf("/proc/%d/ns", pid), flags)
+
+		sys_close(pipe[0])
+		sys_close(pipe[1])
+
+		chExit := make(chan error, 1)
+		go func() {
+			code, err := wait(int(pid))
+			if err != nil {
+				chExit <- fmt.Errorf("error waiting for child: %w", err)
+				return
+			}
+			if code != 0 {
+				chExit <- fmt.Errorf("child exited with code %d: %w", code, unix.Errno(code))
+				return
+			}
+			chExit <- nil
 		}()
 
-		set, err := FromDir(fmt.Sprintf("/proc/%d/ns", pid), flags)
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		select {
+		case <-ctx.Done():
+			kill(pid)
+			err2 := <-chExit
+			if err == nil {
+				err = err2
+			}
+		case err2 := <-chExit:
+			if err2 != nil {
+				err = err2
+			}
+		}
+
 		ch <- result{s: set, err: err}
 	}()
 

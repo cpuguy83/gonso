@@ -228,6 +228,9 @@ func doClone(flags int) (Set, error) {
 			return
 		}
 
+		buf := make([]byte, 1)
+		_p0 := unsafe.Pointer(&buf[0])
+
 		pid, _, errno := unix.RawSyscall6(unix.SYS_CLONE, uintptr(syscall.SIGCHLD)|uintptr(flags), 0, 0, 0, 0, 0)
 		if errno != 0 {
 			ch <- result{err: fmt.Errorf("error calling clone: %w", errno)}
@@ -237,8 +240,6 @@ func doClone(flags int) (Set, error) {
 		}
 		if pid == 0 {
 			// child process
-			buf := make([]byte, 1)
-			_p0 := unsafe.Pointer(&buf[0])
 			_, _, errno := unix.RawSyscall(unix.SYS_READ, uintptr(pipe[0]), uintptr(_p0), uintptr(len(buf)))
 			syscall.RawSyscall(unix.SYS_EXIT, uintptr(errno), 0, 0)
 			return

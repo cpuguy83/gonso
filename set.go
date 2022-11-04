@@ -56,6 +56,55 @@ func (s Set) set() error {
 	return nil
 }
 
+// FdSet is a map of namespace flags to file descriptors.
+// It is used by a Set to store raw file descriptors.
+type FdSet map[int]*os.File
+
+// Get returns the fd for the given flag
+// Only one fd is returned.
+// Only one flag should be provided.
+// If the flag is not in the set, nil is returned.
+func (f FdSet) Get(flag int) *os.File {
+	return f[flag]
+}
+
+// Close closes all the fds in the set.
+func (f FdSet) Close() {
+	for _, fd := range f {
+		fd.Close()
+	}
+}
+
+// Fds returns an FdSet, which is a dup of all the fds in the set.
+// The caller is responsible for closing the returned FdSet.
+// Additionally the caller is responsible for closing the original set.
+//
+// On error, any new fd that was created during this function call is closed.
+func (s Set) Fds(flags int) (_ FdSet, retErr error) {
+	if flags == 0 {
+		flags = s.flags
+	}
+	rawSet := make(FdSet, len(s.fds))
+
+	defer func() {
+		if retErr != nil {
+			rawSet.Close()
+		}
+	}()
+	for flag, fd := range s.fds {
+		if flags&flag == 0 {
+			continue
+		}
+
+		nfd, err := dup(fd)
+		if err != nil {
+			return FdSet{}, fmt.Errorf("error duping fd for %s: %w", nsFlagsReverse[flag], err)
+		}
+		rawSet[flag] = os.NewFile(uintptr(nfd), nsFlagsReverse[flag])
+	}
+	return rawSet, nil
+}
+
 // Dup creates a duplicate of the current set by duplicating the namespace file descriptors in the set and returning a new set.
 // Specifying `flags` will only duplicate the namespaces specified in `flags`.
 // If flags is 0, all namespaces in the set will be duplicated.

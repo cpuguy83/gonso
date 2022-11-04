@@ -5,16 +5,21 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 
 	"golang.org/x/sys/unix"
 )
+
+// alias to make some things easier to read
+type nsFlag = int
 
 // Set represents a set of Linux namespaces.
 // It can be used to perform operations in the context of those namespaces.
 //
 // See `Current` and `Unshare` for creating a new set.
 type Set struct {
-	fds   map[int]*os.File
+	// fd type (e.g. CLONE_NEWNS) => fd
+	fds   map[nsFlag]int
 	flags int
 }
 
@@ -23,7 +28,7 @@ type Set struct {
 // If this is the last reference to the file descriptors, the namespaces will be destroyed.
 func (s Set) Close() error {
 	for _, fd := range s.fds {
-		fd.Close()
+		sys_close(fd)
 	}
 	return nil
 }
@@ -32,19 +37,20 @@ func (s Set) Close() error {
 // Errors are ignored if the current and target namespace are the same.
 func (s Set) set() error {
 	if s.flags&unix.CLONE_NEWNS != 0 {
-		if err := unix.Unshare(unix.CLONE_FS); err != nil {
+		if err := unshare(unix.CLONE_FS); err != nil {
 			return fmt.Errorf("error performing implicit unshare on CLONE_FS: %w", err)
 		}
 	}
-	for _, fd := range s.fds {
-		if err := unix.Setns(int(fd.Fd()), nsFlags[filepath.Base(fd.Name())]); err != nil {
-			fdCur, _ := os.Readlink(filepath.Join("/proc/thread-self/ns", filepath.Base(fd.Name())))
-			fdNew, _ := os.Readlink(fd.Name())
+	for kind, fd := range s.fds {
+		name := nsFlagsReverse[kind]
+		if err := setns(fd, kind); err != nil {
+			fdCur, _ := os.Readlink(filepath.Join("/proc/thread-self/ns", name))
+			fdNew, _ := os.Readlink("/proc/self/fd/" + strconv.Itoa(fd))
 			if fdCur == fdNew && fdCur != "" {
 				// Ignore this error if the namespace is already set to the same value
 				continue
 			}
-			return fmt.Errorf("setns %s: %w", filepath.Base(fd.Name()), err)
+			return fmt.Errorf("setns %s: %w", name, err)
 		}
 	}
 	return nil
@@ -62,7 +68,7 @@ func (s Set) Dup(flags int) (newS Set, retErr error) {
 		}
 	}()
 
-	newS.fds = make(map[int]*os.File, len(s.fds))
+	newS.fds = make(map[nsFlag]int, len(s.fds))
 
 	if flags == 0 {
 		flags = s.flags
@@ -73,11 +79,11 @@ func (s Set) Dup(flags int) (newS Set, retErr error) {
 		if flags&flag == 0 {
 			continue
 		}
-		newFD, err := unix.Dup(int(fd.Fd()))
+		newFD, err := dup(fd)
 		if err != nil {
 			return Set{}, err
 		}
-		newS.fds[flag] = os.NewFile(uintptr(newFD), fd.Name())
+		newS.fds[flag] = newFD
 	}
 	return newS, nil
 }
@@ -193,7 +199,7 @@ func (s Set) Unshare(flags int) (Set, error) {
 				}
 			}()
 
-			if err := unix.Unshare(flags); err != nil {
+			if err := unshare(flags); err != nil {
 				return Set{}, fmt.Errorf("error unsharing namespaces: %w", err)
 			}
 
@@ -254,7 +260,7 @@ func (s Set) Mount(target string) error {
 		}
 		f.Close()
 
-		if err := unix.Mount(fmt.Sprintf("/proc/self/fd/%d", fd.Fd()), f.Name(), "", unix.MS_BIND, ""); err != nil {
+		if err := mount(fmt.Sprintf("/proc/self/fd/%d", fd), f.Name(), false); err != nil {
 			return fmt.Errorf("error mounting %s: %w", name, err)
 		}
 	}
@@ -266,7 +272,7 @@ func (s Set) Mount(target string) error {
 // As an example, you could use the `Set.Mount` function and then use this to create a new set from those mounts.
 // Or you can even point directly at /proc/<pid>/ns.
 func FromDir(dir string, flags int) (_ Set, retErr error) {
-	s := Set{flags: flags, fds: make(map[int]*os.File)}
+	s := Set{flags: flags, fds: make(map[nsFlag]int)}
 	defer func() {
 		if retErr != nil {
 			s.Close()
@@ -278,7 +284,7 @@ func FromDir(dir string, flags int) (_ Set, retErr error) {
 			continue
 		}
 
-		f, err := os.Open(filepath.Join(dir, name))
+		f, err := open(filepath.Join(dir, name))
 		if err != nil {
 			return Set{}, fmt.Errorf("error opening %s: %w", name, err)
 		}
@@ -316,7 +322,7 @@ const (
 )
 
 var (
-	nsFlags = map[string]int{
+	nsFlags = map[string]nsFlag{
 		"cgroup": unix.CLONE_NEWCGROUP,
 		"ipc":    unix.CLONE_NEWIPC,
 		"mnt":    unix.CLONE_NEWNS,
@@ -327,7 +333,7 @@ var (
 		"uts":    unix.CLONE_NEWUTS,
 	}
 
-	nsFlagsReverse = map[int]string{
+	nsFlagsReverse = map[nsFlag]string{
 		unix.CLONE_NEWCGROUP: "cgroup",
 		unix.CLONE_NEWIPC:    "ipc",
 		unix.CLONE_NEWNS:     "mnt",
@@ -361,13 +367,13 @@ func curNamespaces(flags int) (s Set, retErr error) {
 		}
 	}()
 
-	s.fds = make(map[int]*os.File, len(nsFlags))
+	s.fds = make(map[nsFlag]int, len(nsFlags))
 	s.flags = flags
 	for name, flag := range nsFlags {
 		if flags&flag == 0 {
 			continue
 		}
-		fd, err := os.Open(filepath.Join("/proc/thread-self/ns", name))
+		fd, err := open(filepath.Join("/proc/thread-self/ns", name))
 		if err != nil {
 			return Set{}, fmt.Errorf("error opening namespace file: %w", err)
 		}

@@ -20,7 +20,7 @@ func doClone(flags int) (Set, error) {
 		runtime.LockOSThread()
 
 		var pipe [2]int
-		if err := unix.Pipe2(pipe[:], unix.O_CLOEXEC); err != nil {
+		if err := make_pipe(pipe[:]); err != nil {
 			ch <- result{err: fmt.Errorf("error creating pipe: %w", err)}
 			return
 		}
@@ -28,11 +28,11 @@ func doClone(flags int) (Set, error) {
 		buf := make([]byte, 1)
 		_p0 := unsafe.Pointer(&buf[0])
 
-		pid, _, errno := unix.RawSyscall6(unix.SYS_CLONE, uintptr(syscall.SIGCHLD)|unix.CLONE_CLEAR_SIGHAND|uintptr(flags), 0, 0, 0, 0, 0)
+		pid, errno := sys_clone(flags)
 		if errno != 0 {
 			ch <- result{err: fmt.Errorf("error calling clone: %w", errno)}
-			unix.Close(pipe[1])
-			unix.Close(pipe[0])
+			sys_close(pipe[1])
+			sys_close(pipe[0])
 			return
 		}
 		if pid == 0 {
@@ -43,10 +43,10 @@ func doClone(flags int) (Set, error) {
 		}
 
 		defer func() {
-			unix.Close(pipe[0])
-			unix.Close(pipe[1])
-			unix.Kill(int(pid), unix.SIGKILL)
-			unix.Waitid(unix.P_PID, int(pid), nil, unix.WEXITED, nil)
+			sys_close(pipe[0])
+			sys_close(pipe[1])
+			kill(int(pid))
+			waitid(int(pid))
 		}()
 
 		set, err := FromDir(fmt.Sprintf("/proc/%d/ns", pid), flags)

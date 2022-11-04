@@ -35,16 +35,6 @@ func getNS(t *testing.T, ns string) string {
 
 func testUnshare(t *testing.T, restore bool) func(t *testing.T) {
 	return func(t *testing.T) {
-		dir := t.TempDir()
-		if err := unix.Mount("tmpfs", dir, "tmpfs", 0, ""); err != nil {
-			t.Fatal(err)
-		}
-		defer func() {
-			if err := unix.Unmount(dir, unix.MNT_DETACH); err != nil {
-				t.Log(err)
-			}
-		}()
-
 		nsName := "net"
 		ns := nsFlags[nsName]
 
@@ -151,11 +141,11 @@ func TestUserns(t *testing.T) {
 	}
 
 	tmp := t.TempDir()
-	if err := unix.Mount(tmp, tmp, "none", unix.MS_BIND, ""); err != nil {
+	if err := mount(tmp, tmp, false); err != nil {
 		t.Fatal(err)
 	}
 	defer func() {
-		unix.Unmount(tmp, unix.MNT_DETACH)
+		unmount(tmp)
 	}()
 
 	if err := set.Mount(tmp); err != nil {
@@ -197,11 +187,11 @@ func TestFromDir(t *testing.T) {
 	defer set.Close()
 
 	tmp := t.TempDir()
-	if err := unix.Mount(tmp, tmp, "none", unix.MS_BIND, ""); err != nil {
+	if err := mount(tmp, tmp, false); err != nil {
 		t.Fatal(err)
 	}
 	defer func() {
-		unix.Unmount(tmp, unix.MNT_DETACH)
+		unmount(tmp)
 	}()
 
 	if err := set.Mount(tmp); err != nil {

@@ -137,6 +137,50 @@ func TestFromPid(t *testing.T) {
 	}
 }
 
+func TestUserns(t *testing.T) {
+	flags := unix.CLONE_NEWUSER | unix.CLONE_NEWNET
+	set, err := Unshare(flags)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer set.Close()
+
+	err = set.Do(func() bool { return true }, true)
+	if err == nil {
+		t.Fatal("exepcted error callindg `Do` with a userns")
+	}
+
+	tmp := t.TempDir()
+	if err := unix.Mount(tmp, tmp, "none", unix.MS_BIND, ""); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		unix.Unmount(tmp, unix.MNT_DETACH)
+	}()
+
+	if err := set.Mount(tmp); err != nil {
+		t.Fatal(err)
+	}
+
+	set2, err := FromDir(tmp, flags)
+	if err != nil {
+		t.Fatal(err)
+	}
+	set2.Close()
+
+	// Check that we can mask the user namespace and call do
+	dup, err := set.Dup(unix.CLONE_NEWNET)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer dup.Close()
+
+	err = dup.Do(func() bool { return true }, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestFromDir(t *testing.T) {
 	flags := unix.CLONE_NEWNET | unix.CLONE_NEWIPC
 

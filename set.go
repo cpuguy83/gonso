@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"syscall"
+	"unsafe"
 
 	"golang.org/x/sys/unix"
 )
@@ -157,17 +159,14 @@ func (s Set) Do(f func() bool, restore bool) error {
 // This does not change the current set of namespaces, it only creates a new set of namespaces that
 // can be used later with the returned `Set`, e.g. `newSet.Do(func() { ... })`.
 //
-// CLONE_NEWUSER is not supported by this function due to limitations imposed by
-// the kernel.  While it is possible to call unshare(CLONE_NEWUSER), it is not
-// possible to setns(2) to a user namespace from a multi-threaded program.
+// If CLONE_NEWUSER is specified, the Set will be unable to be used with `Do`.
+// This is because the user namespace can only be created (which is done using `clone(2)`) and not joined from a multi-threaded process.
+// The forked process is used to create the user namespace and any other namespaces specified in `flags`.
+// You can use `Do` by calling `Dup` on the set and dropping CLONE_NEWUSER from the flags.
 func (s Set) Unshare(flags int) (Set, error) {
 	type result struct {
 		s   Set
 		err error
-	}
-
-	if flags&unix.CLONE_NEWUSER != 0 {
-		return Set{}, fmt.Errorf("setns(2) does not support joining a user namespace from a multithreaded process: %w", unix.EINVAL)
 	}
 
 	restore := restorable(flags)
@@ -175,6 +174,10 @@ func (s Set) Unshare(flags int) (Set, error) {
 	ch := make(chan result)
 	go func() {
 		newS, err := func() (_ Set, retErr error) {
+			if flags&unix.CLONE_NEWUSER != 0 {
+				return doClone(flags)
+			}
+
 			runtime.LockOSThread()
 			defer func() {
 				// Only unlock this thread if there are no errors.
@@ -207,6 +210,57 @@ func (s Set) Unshare(flags int) (Set, error) {
 
 	r := <-ch
 	return r.s, r.err
+}
+
+func doClone(flags int) (Set, error) {
+	type result struct {
+		s   Set
+		err error
+	}
+
+	ch := make(chan result, 1)
+	go func() {
+		runtime.LockOSThread()
+
+		var pipe [2]int
+		if err := unix.Pipe2(pipe[:], unix.O_CLOEXEC); err != nil {
+			ch <- result{err: fmt.Errorf("error creating pipe: %w", err)}
+			return
+		}
+
+		pid, _, errno := unix.RawSyscall6(unix.SYS_CLONE, uintptr(syscall.SIGCHLD)|uintptr(flags), 0, 0, 0, 0, 0)
+		if errno != 0 {
+			ch <- result{err: fmt.Errorf("error calling clone: %w", errno)}
+			unix.Close(pipe[1])
+			unix.Close(pipe[0])
+			return
+		}
+		if pid == 0 {
+			// child process
+			buf := make([]byte, 1)
+			_p0 := unsafe.Pointer(&buf[0])
+			_, _, errno := unix.RawSyscall(unix.SYS_READ, uintptr(pipe[0]), uintptr(_p0), uintptr(len(buf)))
+			syscall.RawSyscall(unix.SYS_EXIT, uintptr(errno), 0, 0)
+			return
+		}
+
+		defer func() {
+			unix.Close(pipe[0])
+			unix.Close(pipe[1])
+			unix.Kill(int(pid), unix.SIGKILL)
+			unix.Waitid(unix.P_PID, int(pid), nil, unix.WEXITED, nil)
+		}()
+
+		set, err := FromDir(fmt.Sprintf("/proc/%d/ns", pid), flags)
+		ch <- result{s: set, err: err}
+	}()
+
+	r := <-ch
+	return r.s, r.err
+}
+
+func doCloneChild(pipeFd int) {
+
 }
 
 // Unshare returns a new `Set` with the namespaces specified in `flags` unshared (i.e. new namespaces are created).
@@ -256,8 +310,13 @@ func (s Set) Mount(target string) error {
 // FromDir creates a set of namespaces from the specified directory.
 // As an example, you could use the `Set.Mount` function and then use this to create a new set from those mounts.
 // Or you can even point directly at /proc/<pid>/ns.
-func FromDir(dir string, flags int) (Set, error) {
+func FromDir(dir string, flags int) (_ Set, retErr error) {
 	s := Set{flags: flags, fds: make(map[int]*os.File)}
+	defer func() {
+		if retErr != nil {
+			s.Close()
+		}
+	}()
 
 	for kind, name := range nsFlagsReverse {
 		if flags&kind == 0 {

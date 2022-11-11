@@ -1,8 +1,12 @@
 package gonso
 
 import (
+	"bufio"
 	"fmt"
+	"io"
 	"os"
+	"strconv"
+	"strings"
 	"testing"
 
 	"golang.org/x/sys/unix"
@@ -139,13 +143,97 @@ func TestFromPid(t *testing.T) {
 	}
 }
 
+const cmdReadMappings = "readmappings"
+
+func readMappings() {
+	err := func() error {
+		f1, err := os.Open("/proc/self/uid_map")
+		if err != nil {
+			return err
+		}
+		defer f1.Close()
+
+		f2, err := os.Open("/proc/self/gid_map")
+		if err != nil {
+			return err
+		}
+		defer f2.Close()
+
+		if _, err := io.Copy(os.Stdout, f1); err != nil {
+			return err
+		}
+		if _, err := io.Copy(os.Stdout, f2); err != nil {
+			return err
+		}
+		return nil
+	}()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v", err)
+		os.Exit(1)
+	}
+}
+
+func checkIDMaps(t *testing.T, set Set, uidMaps, gidMaps []IDMap) {
+	ch, cancel, stdio, err := set.testDoRexec(t, cmdReadMappings, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stdio.Close()
+	defer cancel()
+
+	chErr := make(chan error, 1)
+	go func() {
+		defer close(chErr)
+		code := <-ch
+		if code != 0 {
+			data, _ := io.ReadAll(stdio.err)
+			chErr <- fmt.Errorf("unexpected exit code %d: %w: %s", code, unix.Errno(code), string(data))
+		}
+	}()
+
+	maps := append(uidMaps, gidMaps...)
+	scanner := bufio.NewScanner(stdio.out)
+	var i int
+	for i = 0; scanner.Scan(); i++ {
+		fields := strings.Fields(scanner.Text())
+		if len(fields) != 3 {
+			t.Errorf("wrong number of fields in id map: %v", fields)
+			continue
+		}
+
+		var idMap IDMap
+		idMap.ContainerID, _ = strconv.Atoi(fields[0])
+		idMap.HostID, _ = strconv.Atoi(fields[1])
+		idMap.Size, _ = strconv.Atoi(fields[2])
+
+		other := maps[i]
+		if idMap.ContainerID != other.ContainerID || idMap.HostID != other.HostID || idMap.Size != other.Size {
+			t.Errorf("unexpected id map: %+v != %+v", idMap, other)
+		}
+	}
+
+	if i != len(maps) {
+		t.Errorf("expected %d maps, got %d", len(maps), i)
+	}
+
+	if err := <-chErr; err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestUserns(t *testing.T) {
 	flags := unix.CLONE_NEWUSER | unix.CLONE_NEWNET
-	set, err := Unshare(flags)
+
+	maps := []IDMap{
+		{HostID: 0, ContainerID: 0, Size: 1},
+		{HostID: 1000, ContainerID: 10000, Size: 1000},
+	}
+	set, err := Unshare(flags, WithIDMaps(maps, maps))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer set.Close()
+	checkIDMaps(t, set, maps, maps)
 
 	if _, ok := set.fds[unix.CLONE_NEWUSER]; !ok {
 		t.Fatal("set should include userns")
@@ -156,7 +244,6 @@ func TestUserns(t *testing.T) {
 		t.Fatal("exepcted error callindg `Do` with a userns")
 	}
 
-	// Unshare with
 	unshared, err := set.Unshare(unix.CLONE_NEWIPC)
 	if err != nil {
 		t.Fatal(err)

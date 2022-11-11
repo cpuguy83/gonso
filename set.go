@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"syscall"
 
 	"golang.org/x/sys/unix"
 )
@@ -270,6 +271,28 @@ func merge(orig Set, newS *Set) (retErr error) {
 	return nil
 }
 
+// UnshareOpt is used to configure the Unshare function.
+type UnshareOpt func(*UnshareConfig)
+
+type IDMap = syscall.SysProcIDMap
+
+// UnshareConfig holds configuration options for the Unshare function.
+type UnshareConfig struct {
+	// UidMappings is a list of uid mappings to use for the user namespace.
+	UidMaps []IDMap
+	// GidMappings is a list of gid mappings to use for the user namespace.
+	GidMaps []IDMap
+}
+
+// WithIDMaps sets the uid and gid mappings to use for the user namespace.
+// It can be used as an UnshareOpt to configure the Unshare function.
+func WithIDMaps(uidMaps, gidMaps []IDMap) UnshareOpt {
+	return func(c *UnshareConfig) {
+		c.UidMaps = uidMaps
+		c.GidMaps = gidMaps
+	}
+}
+
 // Unshare creates a new set with the namespaces specified in `flags` unshared (i.e. new namespaces are created).
 //
 // This does not change the current set of namespaces, it only creates a new set of namespaces that
@@ -279,7 +302,7 @@ func merge(orig Set, newS *Set) (retErr error) {
 // This is because the user namespace can only be created (which is done using `clone(2)`) and not joined from a multi-threaded process.
 // The forked process is used to create the user namespace and any other namespaces specified in `flags`.
 // You can use `Do` by calling `Dup` on the set and dropping CLONE_NEWUSER from the flags.
-func (s Set) Unshare(flags int) (Set, error) {
+func (s Set) Unshare(flags int, opts ...UnshareOpt) (Set, error) {
 	type result struct {
 		s   Set
 		err error
@@ -287,21 +310,25 @@ func (s Set) Unshare(flags int) (Set, error) {
 
 	restore := restorable(flags)
 
+	var cfg UnshareConfig
+	for _, opt := range opts {
+		opt(&cfg)
+	}
+
+	if (len(cfg.UidMaps) > 0 || len(cfg.GidMaps) > 0) && flags&unix.CLONE_NEWUSER == 0 {
+		// Only setting the idmaps when creating the userns is first created supported.
+		return Set{}, fmt.Errorf("id maps specified but CLONE_NEWUSER not in flags: %w", unix.EINVAL)
+	}
+
 	ch := make(chan result)
 	go func() {
+
 		newS, err := func() (_ Set, retErr error) {
 			if flags&unix.CLONE_NEWUSER != 0 || s.flags&unix.CLONE_NEWUSER != 0 {
 				// If we are creating a new user namespace, we need to fork a new process
 				// If the Set already contains a user namespace and we are not creating a new one, then we also need to join the user namespace before creating the new namespaces.
 				// This ensures the new namespaces are bouond to the user namespace.
-				usernsFd := -1
-				if s.flags&unix.CLONE_NEWUSER != 0 && flags&unix.CLONE_NEWUSER == 0 {
-					usernsFd = s.fds[unix.CLONE_NEWUSER]
-				}
-				if err := s.set(true); err != nil {
-					return Set{}, err
-				}
-				newS, err := doClone(flags, usernsFd)
+				newS, err := cloneNs(s, flags, cfg.UidMaps, cfg.GidMaps)
 				if err != nil {
 					return Set{}, err
 				}
@@ -313,6 +340,7 @@ func (s Set) Unshare(flags int) (Set, error) {
 			}
 
 			runtime.LockOSThread()
+
 			defer func() {
 				// Only unlock this thread if there are no errors.
 				// Additionally should not unlock threads that have had non-reversiable changes made to them.
@@ -349,12 +377,12 @@ func (s Set) Unshare(flags int) (Set, error) {
 // Unshare returns a new `Set` with the namespaces specified in `flags` unshared (i.e. new namespaces are created).
 // The returned set only contains the namespaces specified in `flags`.
 // This is the same as calling `Current(flags).Unshare(flags)`.
-func Unshare(flags int) (Set, error) {
+func Unshare(flags int, opts ...UnshareOpt) (Set, error) {
 	s, err := Current(flags)
 	if err != nil {
 		return Set{}, err
 	}
-	return s.Unshare(flags)
+	return s.Unshare(flags, opts...)
 }
 
 // Mount the set's namespaces to the specified target directory with each

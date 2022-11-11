@@ -10,7 +10,16 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+var cmdVtable = map[string]func(){
+	cmdReadMappings: readMappings,
+}
+
 func TestMain(m *testing.M) {
+	if f, ok := cmdVtable[os.Args[0]]; ok {
+		f()
+		return
+	}
+
 	if !checkCapSysAdmin() {
 		fmt.Fprintln(os.Stderr, "CAP_SYS_ADMIN is required to run, re-execing with sudo")
 		// run with sudo

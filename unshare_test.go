@@ -29,7 +29,7 @@ func TestUnshare(t *testing.T) {
 func getNS(t *testing.T, ns string) string {
 	t.Helper()
 
-	p := "/proc/thread-self/ns/" + ns
+	p := "/proc/" + strconv.Itoa(unix.Gettid()) + "/ns/" + ns
 	l, err := os.Readlink(p)
 	if err != nil {
 		t.Fatalf("readlink %s: %v", p, err)

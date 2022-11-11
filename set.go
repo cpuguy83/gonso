@@ -53,7 +53,7 @@ func (s Set) set(skipUser bool) error {
 		}
 		name := nsFlagsReverse[kind]
 		if err := setns(fd, kind); err != nil {
-			fdCur, _ := os.Readlink(filepath.Join("/proc/thread-self/ns", name))
+			fdCur, _ := os.Readlink(filepath.Join("/proc/"+strconv.Itoa(unix.Gettid())+"/ns", name))
 			fdNew, _ := os.Readlink("/proc/self/fd/" + strconv.Itoa(fd))
 			if fdCur == fdNew && fdCur != "" {
 				// Ignore this error if the namespace is already set to the same value
@@ -525,7 +525,7 @@ func curNamespaces(flags int) (s Set, retErr error) {
 		if flags&flag == 0 {
 			continue
 		}
-		fd, err := open(filepath.Join("/proc/thread-self/ns", name))
+		fd, err := open(filepath.Join("/proc/"+strconv.Itoa(unix.Gettid())+"/ns", name))
 		if err != nil {
 			return Set{}, fmt.Errorf("error opening namespace file: %w", err)
 		}

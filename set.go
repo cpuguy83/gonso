@@ -1,6 +1,7 @@
 package gonso
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -414,26 +415,38 @@ func (s Set) Mount(target string) error {
 // MountNSX mounts a single, specific namespace from the set to the specified target.
 // This differs from `Mount` because it treats the target as a file to mount to rather than the directory.
 func (s Set) MountNS(ns int, target string) error {
-	fd, ok := s.fds[ns]
+	_, ok := s.fds[ns]
 	if !ok {
 		if ns != 0 {
-			return fmt.Errorf("namespace not found in set")
+			return errors.New("namespace not found in set")
 		}
 		if len(s.fds) > 1 {
-			return fmt.Errorf("set contains more than one namespace, must provide a namespace type to mount")
+			return errors.New("set contains more than one namespace, must provide a namespace type to mount")
+		}
+		for kind := range s.fds {
+			ns = kind
+			break
 		}
 	}
 
+	name := nsFlagsReverse[ns]
 	f, err := os.Create(target)
 	if err != nil {
-		return fmt.Errorf("error creating target file for %s: %w", nsFlagsReverse[ns], err)
+		return fmt.Errorf("error creating target file for %s: %w", name, err)
 	}
 	f.Close()
 
-	if err := mount(fmt.Sprintf("/proc/self/fd/%d", fd), f.Name(), false); err != nil {
-		os.Remove(f.Name())
-		return fmt.Errorf("error mounting %s: %w", nsFlagsReverse[ns], err)
+	var mountErr error
+	s.Do(func() {
+		mountErr = mount("/proc/self/ns/"+name, f.Name(), false)
+		if err != nil {
+			os.Remove(f.Name())
+		}
+	})
+	if mountErr != nil {
+		return fmt.Errorf("error mounting %s: %w", name, mountErr)
 	}
+
 	return nil
 }
 

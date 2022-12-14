@@ -441,7 +441,7 @@ func (s Set) MountNS(ns int, target string) error {
 
 	var mountErr error
 	s.Do(func() {
-		mountErr = mount("/proc/self/ns/"+name, f.Name(), false)
+		mountErr = mount(filepath.Join("/proc/"+strconv.Itoa(unix.Gettid())+"/ns", name), f.Name(), false)
 		if err != nil {
 			os.Remove(f.Name())
 		}

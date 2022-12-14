@@ -401,21 +401,39 @@ func Unshare(flags int, opts ...UnshareOpt) (Set, error) {
 func (s Set) Mount(target string) error {
 	var err error
 
-	for kind, fd := range s.fds {
+	for kind := range s.fds {
 		name := nsFlagsReverse[kind]
 
-		f, err := os.Create(filepath.Join(target, name))
-		if err != nil {
-			return fmt.Errorf("error creating target file for %s: %w", name, err)
+		if err := s.MountNS(kind, filepath.Join(target, name)); err != nil {
+			return err
 		}
-		f.Close()
+	}
+	return err
+}
 
-		if err := mount(fmt.Sprintf("/proc/self/fd/%d", fd), f.Name(), false); err != nil {
-			return fmt.Errorf("error mounting %s: %w", name, err)
+// MountNSX mounts a single, specific namespace from the set to the specified target.
+// This differs from `Mount` because it treats the target as a file to mount to rather than the directory.
+func (s Set) MountNS(ns int, target string) error {
+	fd, ok := s.fds[ns]
+	if !ok {
+		if ns != 0 {
+			return fmt.Errorf("namespace not found in set")
+		}
+		if len(s.fds) > 0 {
+			return fmt.Errorf("set contains more than one namespace, must provide a namespace type to mount")
 		}
 	}
 
-	return err
+	f, err := os.Create(target)
+	if err != nil {
+		return fmt.Errorf("error creating target file for %s: %w", nsFlagsReverse[ns], err)
+	}
+	f.Close()
+
+	if err := mount(fmt.Sprintf("/proc/self/fd/%d", fd), f.Name(), false); err != nil {
+		return fmt.Errorf("error mounting %s: %w", nsFlagsReverse[ns], err)
+	}
+	return nil
 }
 
 // FromDir creates a set of namespaces from the specified directory.

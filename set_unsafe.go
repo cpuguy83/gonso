@@ -42,8 +42,11 @@ func doClone(s Set, flags, pipeFd int) (pid int, _ error) {
 		usernsFd = s.fds[unix.CLONE_NEWUSER]
 	}
 
+	// Handle overflow of untyped int on 32-bit platforms
+	clearSigHand := int64(unix.CLONE_CLEAR_SIGHAND)
+
 	beforeFork()
-	pidptr, _, errno := unix.RawSyscall6(unix.SYS_CLONE, uintptr(unix.SIGCHLD)|unix.CLONE_CLEAR_SIGHAND|unix.CLONE_FILES|uintptr(flags), 0, 0, 0, 0, 0)
+	pidptr, _, errno := unix.RawSyscall6(unix.SYS_CLONE, uintptr(unix.SIGCHLD)|uintptr(clearSigHand)|unix.CLONE_FILES|uintptr(flags), 0, 0, 0, 0, 0)
 	if errno != 0 {
 		afterFork()
 		return 0, fmt.Errorf("error calling clone: %w", errno)

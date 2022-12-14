@@ -419,7 +419,7 @@ func (s Set) MountNS(ns int, target string) error {
 		if ns != 0 {
 			return fmt.Errorf("namespace not found in set")
 		}
-		if len(s.fds) > 0 {
+		if len(s.fds) > 1 {
 			return fmt.Errorf("set contains more than one namespace, must provide a namespace type to mount")
 		}
 	}

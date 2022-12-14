@@ -2,6 +2,7 @@ package gonso
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"runtime"
 	"testing"
@@ -146,7 +147,54 @@ func TestDup(t *testing.T) {
 			t.Fatal(err)
 		}
 	})
+}
 
+func TestMountNS(t *testing.T) {
+	s, err := Unshare(NS_NET)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	f, err := os.CreateTemp("", "test-mountns")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+
+	if err := s.MountNS(0, f.Name()); err != nil {
+		t.Fatal(err, s.fds)
+	}
+
+	unmount(f.Name())
+
+	if err := s.MountNS(NS_NET, f.Name()); err != nil {
+		t.Fatal(err)
+	}
+	unmount(f.Name())
+
+	if err := s.MountNS(NS_NET|NS_IPC, f.Name()); err == nil {
+		t.Fatal("expected error")
+	}
+
+	s.Close()
+
+	s, err = Unshare(NS_NET | NS_IPC)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	if err := s.MountNS(NS_NET|NS_IPC, f.Name()); err == nil {
+		t.Fatal("expected error")
+	}
+	if err := s.MountNS(0, f.Name()); err == nil {
+		t.Fatal("expected error")
+	}
+	if err := s.MountNS(NS_NET, f.Name()); err != nil {
+		t.Fatal(err)
+	}
+	unmount(f.Name())
 }
 
 func (s Set) testGetID(t *testing.T, ns int) string {

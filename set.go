@@ -414,6 +414,9 @@ func (s Set) Mount(target string) error {
 
 // MountNSX mounts a single, specific namespace from the set to the specified target.
 // This differs from `Mount` because it treats the target as a file to mount to rather than the directory.
+//
+// You must only pass one namespace type to this function.
+// If the set only contains 1 namespace, you can pass 0 to mount that namespace.
 func (s Set) MountNS(ns int, target string) error {
 	_, ok := s.fds[ns]
 	if !ok {

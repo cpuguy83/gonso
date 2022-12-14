@@ -431,6 +431,7 @@ func (s Set) MountNS(ns int, target string) error {
 	f.Close()
 
 	if err := mount(fmt.Sprintf("/proc/self/fd/%d", fd), f.Name(), false); err != nil {
+		os.Remove(f.Name())
 		return fmt.Errorf("error mounting %s: %w", nsFlagsReverse[ns], err)
 	}
 	return nil

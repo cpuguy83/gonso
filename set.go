@@ -383,6 +383,7 @@ func Unshare(flags int, opts ...UnshareOpt) (Set, error) {
 	if err != nil {
 		return Set{}, err
 	}
+	defer s.Close()
 	return s.Unshare(flags, opts...)
 }
 
